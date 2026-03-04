@@ -1,4 +1,4 @@
-# Video on Demand on AWS Foundation
+# Guidance for Video on Demand on AWS Foundation
 
 _Deploy a customizable architecture to build a video-on-demand workflow._
 
