@@ -1,5 +1,6 @@
 .DS_Store
 .vscode/
+.kiro/
 .cdk.staging
 cdk.out
 node_modules/
