@@ -26,7 +26,7 @@ export class VodFoundation extends cdk.Stack {
         /**
          * CloudFormation Template Descrption
          */
-        const solutionId = 'SO0146'
+        const solutionId = 'SO9673'
         const solutionName = 'Video on Demand on AWS Foundation'
         const solutionVersion = scope.node.tryGetContext('solution_version') ?? '%%VERSION%%';
         this.templateOptions.description = `(${solutionId}) ${solutionName} Solution Implementation. Version ${solutionVersion}`;
