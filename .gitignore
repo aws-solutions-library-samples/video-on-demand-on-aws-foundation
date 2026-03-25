@@ -1,4 +1,6 @@
 .DS_Store
+/package-lock.json
+/source/package-lock.json
 .vscode/
 .kiro/
 .cdk.staging
