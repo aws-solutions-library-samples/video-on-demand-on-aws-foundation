@@ -1,7 +1,7 @@
 ---
-id: SO0146
+id: SO9673
 name: video-on-demand-on-aws-foundation
-version: v1.3.13
+version: v1.3.14
 cloudformation_templates:
   - template: video-on-demand-on-aws-foundation.template
     main_template: true

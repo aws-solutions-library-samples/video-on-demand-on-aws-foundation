@@ -2,7 +2,7 @@
 
 exports[`VOD Foundation Stack Test 1`] = `
 {
-  "Description": "(SO0146) Video on Demand on AWS Foundation Solution Implementation. Version %%VERSION%%",
+  "Description": "(SO9673) Video on Demand on AWS Foundation Solution Implementation. Version %%VERSION%%",
   "Mappings": {
     "Send": {
       "AnonymizedUsage": {
@@ -254,7 +254,7 @@ exports[`VOD Foundation Stack Test 1`] = `
         "Description": "CFN Custom resource to copy assets to S3 and get the MediaConvert endpoint",
         "Environment": {
           "Variables": {
-            "SOLUTION_IDENTIFIER": "AwsSolution/SO0146/%%VERSION%%",
+            "SOLUTION_IDENTIFIER": "AwsSolution/SO9673/%%VERSION%%",
           },
         },
         "Handler": "index.handler",
@@ -657,8 +657,8 @@ exports[`VOD Foundation Stack Test 1`] = `
                 "TopicName",
               ],
             },
-            "SOLUTION_ID": "SO0146",
-            "SOLUTION_IDENTIFIER": "AwsSolution/SO0146/%%VERSION%%",
+            "SOLUTION_ID": "SO9673",
+            "SOLUTION_IDENTIFIER": "AwsSolution/SO9673/%%VERSION%%",
             "SOURCE_BUCKET": {
               "Ref": "Source71E471F1",
             },
@@ -1507,8 +1507,8 @@ exports[`VOD Foundation Stack Test 1`] = `
                 "TopicName",
               ],
             },
-            "SOLUTION_ID": "SO0146",
-            "SOLUTION_IDENTIFIER": "AwsSolution/SO0146/%%VERSION%%",
+            "SOLUTION_ID": "SO9673",
+            "SOLUTION_IDENTIFIER": "AwsSolution/SO9673/%%VERSION%%",
             "STACKNAME": {
               "Ref": "AWS::StackName",
             },
