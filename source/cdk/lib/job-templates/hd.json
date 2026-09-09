@@ -1,0 +1,82 @@
+{
+  "Name": "HD",
+  "Description": "VOD Foundation HD tier - CMAF, AVC (H.264), AAC, QVBR, Auto ABR",
+  "Category": "VOD",
+  "Settings": {
+    "TimecodeConfig": {
+      "Source": "ZEROBASED"
+    },
+    "OutputGroups": [
+      {
+        "Name": "CMAF",
+        "Outputs": [
+          {
+            "ContainerSettings": {
+              "Container": "CMFC"
+            },
+            "VideoDescription": {
+              "CodecSettings": {
+                "Codec": "H_264",
+                "H264Settings": {
+                  "RateControlMode": "QVBR",
+                  "FramerateControl": "INITIALIZE_FROM_SOURCE",
+                  "SceneChangeDetect": "TRANSITION_DETECTION",
+                  "QualityTuningLevel": "MULTI_PASS_HQ",
+                  "GopSize": 2,
+                  "GopSizeUnits": "SECONDS",
+                  "GopClosedCadence": 1,
+                  "ParControl": "SPECIFIED",
+                  "ParNumerator": 1,
+                  "ParDenominator": 1
+                }
+              }
+            },
+            "NameModifier": "_video"
+          },
+          {
+            "ContainerSettings": {
+              "Container": "CMFC"
+            },
+            "AudioDescriptions": [
+              {
+                "AudioSourceName": "Audio Selector 1",
+                "CodecSettings": {
+                  "Codec": "AAC",
+                  "AacSettings": {
+                    "Bitrate": 128000,
+                    "CodingMode": "CODING_MODE_2_0",
+                    "SampleRate": 48000
+                  }
+                }
+              }
+            ],
+            "NameModifier": "_audio"
+          }
+        ],
+        "OutputGroupSettings": {
+          "Type": "CMAF_GROUP_SETTINGS",
+          "CmafGroupSettings": {
+            "TargetDurationCompatibilityMode": "SPEC_COMPLIANT",
+            "WriteHlsManifest": "ENABLED",
+            "WriteDashManifest": "ENABLED",
+            "SegmentLength": 10,
+            "FragmentLength": 2,
+            "SegmentControl": "SEGMENTED_FILES"
+          }
+        },
+        "AutomatedEncodingSettings": {
+          "AbrSettings": {
+            "MaxQualityLevel": 7,
+            "MaxRenditions": 5,
+            "MaxAbrBitrate": 8500000
+          }
+        }
+      }
+    ]
+  },
+  "AccelerationSettings": {
+    "Mode": "PREFERRED"
+  },
+  "StatusUpdateInterval": "SECONDS_60",
+  "Priority": 0
+}

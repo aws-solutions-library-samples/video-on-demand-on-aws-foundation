@@ -1,0 +1,64 @@
+name: CI
+
+# Validation-only CI for the CDK application (source/cdk): build, unit tests, and
+# `cdk synth` (which runs the AwsSolutionsChecks cdk-nag aspect). No AWS credentials
+# and no deploy — this workflow only proves the app compiles, tests pass, and synth
+# stays clean of nag findings. Runs on PRs and pushes to the default branch.
+
+on:
+  push:
+    branches: [main]
+  pull_request:            # pull_request (NOT pull_request_target): fork PRs run with a
+    branches: [main]       # read-only token and no access to secrets.
+
+# Least-privilege default for the whole workflow; the single job needs only checkout.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref so rapid PR pushes don't pile up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: source/cdk
+
+jobs:
+  validate:
+    name: Build · Test · Synth
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@cb605e52c26070c328afc4562f0b4ada7618a84e # v2.10.4
+        with:
+          egress-policy: audit        # start in audit; tighten to 'block' once egress is known
+          disable-sudo: true
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: source/cdk/.nvmrc
+          cache: npm
+          cache-dependency-path: source/cdk/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Unit tests (jest --coverage)
+        run: npm test
+
+      - name: CDK synth (enforces cdk-nag / AwsSolutionsChecks)
+        # A valid `email` context is required at synth time; a dummy value is fine
+        # because CI never deploys. solution_version is derived from package.json.
+        run: npm run synth -- -c email=ci@example.com

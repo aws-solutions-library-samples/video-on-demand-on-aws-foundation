@@ -1,0 +1,2813 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`VOD Foundation Stack Test 1`] = `
+{
+  "Description": "(SO9673) Video on Demand on AWS Foundation Solution Implementation. Version v2.0.0",
+  "Outputs": {
+    "CloudFrontDomain": {
+      "Description": "CloudFront Domain Name",
+      "Export": {
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-CloudFrontDomain",
+            ],
+          ],
+        },
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "CloudFrontCloudFrontDistribution824F3346",
+          "DomainName",
+        ],
+      },
+    },
+    "DestinationBucket": {
+      "Description": "Source S3 Bucket used to host all MediaConvert ouputs",
+      "Export": {
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-DestinationBucket",
+            ],
+          ],
+        },
+      },
+      "Value": {
+        "Ref": "Destination920A3C57",
+      },
+    },
+    "SnsTopic": {
+      "Description": "SNS Topic used to capture the VOD workflow outputs including errors",
+      "Export": {
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-SnsTopic",
+            ],
+          ],
+        },
+      },
+      "Value": {
+        "Fn::GetAtt": [
+          "CompleteSNS2557842D",
+          "TopicName",
+        ],
+      },
+    },
+    "SourceBucket": {
+      "Description": "Source S3 Bucket used to host source video and MediaConvert job settings files",
+      "Export": {
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-SourceBucket",
+            ],
+          ],
+        },
+      },
+      "Value": {
+        "Ref": "Source71E471F1",
+      },
+    },
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
+  },
+  "Resources": {
+    "BucketNotificationsHandler050a0587b7544547bf325f094a3db8347ECC3691": {
+      "DependsOn": [
+        "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC",
+      ],
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+              "id": "AwsSolutions-IAM4",
+              "reason": "CDK-managed S3 bucket-notifications handler role uses the AWS managed AWSLambdaBasicExecutionRole policy.",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "Code": {
+          "ZipFile": "import boto3  # type: ignore
+import json
+import logging
+import urllib.request
+
+s3 = boto3.client("s3")
+
+EVENTBRIDGE_CONFIGURATION = 'EventBridgeConfiguration'
+CONFIGURATION_TYPES = ["TopicConfigurations", "QueueConfigurations", "LambdaFunctionConfigurations"]
+
+def handler(event: dict, context):
+  response_status = "SUCCESS"
+  error_message = ""
+  try:
+    props = event["ResourceProperties"]
+    notification_configuration = props["NotificationConfiguration"]
+    managed = props.get('Managed', 'true').lower() == 'true'
+    skipDestinationValidation = props.get('SkipDestinationValidation', 'false').lower() == 'true'
+    stack_id = event['StackId']
+    old = event.get("OldResourceProperties", {}).get("NotificationConfiguration", {})
+    if managed:
+      config = handle_managed(event["RequestType"], notification_configuration)
+    else:
+      config = handle_unmanaged(props["BucketName"], stack_id, event["RequestType"], notification_configuration, old)
+    s3.put_bucket_notification_configuration(Bucket=props["BucketName"], NotificationConfiguration=config, SkipDestinationValidation=skipDestinationValidation)
+  except Exception as e:
+    logging.exception("Failed to put bucket notification configuration")
+    response_status = "FAILED"
+    error_message = f"Error: {str(e)}. "
+  finally:
+    submit_response(event, context, response_status, error_message)
+
+def handle_managed(request_type, notification_configuration):
+  if request_type == 'Delete':
+    return {}
+  return notification_configuration
+
+def handle_unmanaged(bucket, stack_id, request_type, notification_configuration, old):
+  def get_id(n):
+    n['Id'] = ''
+    sorted_notifications = sort_filter_rules(n)
+    strToHash=json.dumps(sorted_notifications, sort_keys=True).replace('"Name": "prefix"', '"Name": "Prefix"').replace('"Name": "suffix"', '"Name": "Suffix"')
+    return f"{stack_id}-{hash(strToHash)}"
+  def with_id(n):
+    n['Id'] = get_id(n)
+    return n
+
+  external_notifications = {}
+  existing_notifications = s3.get_bucket_notification_configuration(Bucket=bucket)
+  for t in CONFIGURATION_TYPES:
+    if request_type == 'Update':
+        old_incoming_ids = [get_id(n) for n in old.get(t, [])]
+        external_notifications[t] = [n for n in existing_notifications.get(t, []) if not get_id(n) in old_incoming_ids]      
+    elif request_type == 'Delete':
+        external_notifications[t] = [n for n in existing_notifications.get(t, []) if not n['Id'].startswith(f"{stack_id}-")]
+    elif request_type == 'Create':
+        external_notifications[t] = [n for n in existing_notifications.get(t, [])]
+  if EVENTBRIDGE_CONFIGURATION in existing_notifications:
+    external_notifications[EVENTBRIDGE_CONFIGURATION] = existing_notifications[EVENTBRIDGE_CONFIGURATION]
+
+  if request_type == 'Delete':
+    return external_notifications
+
+  notifications = {}
+  for t in CONFIGURATION_TYPES:
+    external = external_notifications.get(t, [])
+    incoming = [with_id(n) for n in notification_configuration.get(t, [])]
+    notifications[t] = external + incoming
+
+  if EVENTBRIDGE_CONFIGURATION in notification_configuration:
+    notifications[EVENTBRIDGE_CONFIGURATION] = notification_configuration[EVENTBRIDGE_CONFIGURATION]
+  elif EVENTBRIDGE_CONFIGURATION in external_notifications:
+    notifications[EVENTBRIDGE_CONFIGURATION] = external_notifications[EVENTBRIDGE_CONFIGURATION]
+
+  return notifications
+
+def submit_response(event: dict, context, response_status: str, error_message: str):
+  response_body = json.dumps(
+    {
+      "Status": response_status,
+      "Reason": f"{error_message}See the details in CloudWatch Log Stream: {context.log_stream_name}",
+      "PhysicalResourceId": event.get("PhysicalResourceId") or event["LogicalResourceId"],
+      "StackId": event["StackId"],
+      "RequestId": event["RequestId"],
+      "LogicalResourceId": event["LogicalResourceId"],
+      "NoEcho": False,
+    }
+  ).encode("utf-8")
+  headers = {"content-type": "", "content-length": str(len(response_body))}
+  try:
+    req = urllib.request.Request(url=event["ResponseURL"], headers=headers, data=response_body, method="PUT")
+    with urllib.request.urlopen(req) as response:
+      print(response.read().decode("utf-8"))
+    print("Status code: " + response.reason)
+  except Exception as e:
+      print("send(..) failed executing request.urlopen(..): " + str(e))
+
+def sort_filter_rules(json_obj):
+  if not isinstance(json_obj, dict):
+      return json_obj
+  for key, value in json_obj.items():
+      if isinstance(value, dict):
+          json_obj[key] = sort_filter_rules(value)
+      elif isinstance(value, list):
+          json_obj[key] = [sort_filter_rules(item) for item in value]
+  if "Filter" in json_obj and "Key" in json_obj["Filter"] and "FilterRules" in json_obj["Filter"]["Key"]:
+      filter_rules = json_obj["Filter"]["Key"]["FilterRules"]
+      sorted_filter_rules = sorted(filter_rules, key=lambda x: x["Name"])
+      json_obj["Filter"]["Key"]["FilterRules"] = sorted_filter_rules
+  return json_obj",
+        },
+        "Description": "AWS CloudFormation handler for "Custom::S3BucketNotifications" resources (@aws-cdk/aws-s3)",
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC",
+            "Arn",
+          ],
+        },
+        "Runtime": "python3.13",
+        "Timeout": 300,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+              "id": "AwsSolutions-IAM4",
+              "reason": "CDK-managed S3 bucket-notifications handler role uses the AWS managed AWSLambdaBasicExecutionRole policy.",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "CloudFrontCloudFrontDistribution824F3346": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "AwsSolutions-CFR1",
+              "reason": "Use case does not warrant CloudFront Geo restriction",
+            },
+            {
+              "id": "AwsSolutions-CFR2",
+              "reason": "Use case does not warrant CloudFront integration with AWS WAF",
+            },
+            {
+              "id": "AwsSolutions-CFR4",
+              "reason": "CloudFront automatically sets the security policy to TLSv1 when the distribution uses the CloudFront domain name",
+            },
+            {
+              "id": "AwsSolutions-CFR7",
+              "reason": "False alarm. The AWS-cloudfront-s3 solutions construct provides Origin-Access-Control by default.",
+            },
+          ],
+        },
+        "cfn_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "W70",
+              "reason": "Since the distribution uses the CloudFront domain name, CloudFront automatically sets the security policy to TLSv1 regardless of the value of MinimumProtocolVersion",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "DistributionConfig": {
+          "Comment": {
+            "Fn::Join": [
+              "",
+              [
+                {
+                  "Ref": "AWS::StackName",
+                },
+                " Video on Demand Foundation",
+              ],
+            ],
+          },
+          "CustomErrorResponses": [
+            {
+              "ErrorCachingMinTTL": 1,
+              "ErrorCode": 403,
+            },
+            {
+              "ErrorCachingMinTTL": 1,
+              "ErrorCode": 500,
+            },
+            {
+              "ErrorCachingMinTTL": 10,
+              "ErrorCode": 502,
+            },
+            {
+              "ErrorCachingMinTTL": 10,
+              "ErrorCode": 503,
+            },
+            {
+              "ErrorCachingMinTTL": 10,
+              "ErrorCode": 504,
+            },
+            {
+              "ErrorCachingMinTTL": 10,
+              "ErrorCode": 400,
+            },
+            {
+              "ErrorCachingMinTTL": 10,
+              "ErrorCode": 405,
+            },
+            {
+              "ErrorCachingMinTTL": 10,
+              "ErrorCode": 414,
+            },
+          ],
+          "DefaultCacheBehavior": {
+            "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+            "Compress": true,
+            "ResponseHeadersPolicyId": {
+              "Ref": "CloudFrontResponseHeadersPolicy167CC132",
+            },
+            "TargetOriginId": "VODCloudFrontCloudFrontDistributionOrigin1D96CD58B",
+            "ViewerProtocolPolicy": "redirect-to-https",
+          },
+          "DefaultRootObject": "",
+          "Enabled": true,
+          "HttpVersion": "http2and3",
+          "IPV6Enabled": true,
+          "Logging": {
+            "Bucket": {
+              "Fn::GetAtt": [
+                "Logs6819BB44",
+                "RegionalDomainName",
+              ],
+            },
+            "Prefix": "cloudfront-logs/",
+          },
+          "Origins": [
+            {
+              "DomainName": {
+                "Fn::GetAtt": [
+                  "Destination920A3C57",
+                  "RegionalDomainName",
+                ],
+              },
+              "Id": "VODCloudFrontCloudFrontDistributionOrigin1D96CD58B",
+              "OriginAccessControlId": {
+                "Fn::GetAtt": [
+                  "CloudFrontCloudFrontOac36AB834C",
+                  "Id",
+                ],
+              },
+              "S3OriginConfig": {
+                "OriginAccessIdentity": "",
+              },
+            },
+          ],
+        },
+      },
+      "Type": "AWS::CloudFront::Distribution",
+    },
+    "CloudFrontCloudFrontOac36AB834C": {
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Description": "Origin access control provisioned by aws-cloudfront-s3",
+          "Name": {
+            "Fn::Join": [
+              "",
+              [
+                "aws-cloudfront-s3-ClouFront-",
+                {
+                  "Fn::Select": [
+                    2,
+                    {
+                      "Fn::Split": [
+                        "/",
+                        {
+                          "Ref": "AWS::StackId",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            ],
+          },
+          "OriginAccessControlOriginType": "s3",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4",
+        },
+      },
+      "Type": "AWS::CloudFront::OriginAccessControl",
+    },
+    "CloudFrontResponseHeadersPolicy167CC132": {
+      "Properties": {
+        "ResponseHeadersPolicyConfig": {
+          "CorsConfig": {
+            "AccessControlAllowCredentials": false,
+            "AccessControlAllowHeaders": {
+              "Items": [
+                "*",
+              ],
+            },
+            "AccessControlAllowMethods": {
+              "Items": [
+                "GET",
+                "HEAD",
+                "OPTIONS",
+              ],
+            },
+            "AccessControlAllowOrigins": {
+              "Items": [
+                "*",
+              ],
+            },
+            "AccessControlMaxAgeSec": 3000,
+            "OriginOverride": true,
+          },
+          "Name": "VODCloudFrontResponseHeadersPolicy464B0069",
+          "SecurityHeadersConfig": {
+            "ContentTypeOptions": {
+              "Override": true,
+            },
+            "ReferrerPolicy": {
+              "Override": true,
+              "ReferrerPolicy": "strict-origin-when-cross-origin",
+            },
+            "StrictTransportSecurity": {
+              "AccessControlMaxAgeSec": 63072000,
+              "IncludeSubdomains": true,
+              "Override": true,
+            },
+          },
+        },
+      },
+      "Type": "AWS::CloudFront::ResponseHeadersPolicy",
+    },
+    "CompleteSNS2557842D": {
+      "Properties": {
+        "KmsMasterKeyId": {
+          "Fn::GetAtt": [
+            "CompleteSnsKey06400967",
+            "Arn",
+          ],
+        },
+      },
+      "Type": "AWS::SNS::Topic",
+    },
+    "CompleteSNStestexamplecomAEE50A4A": {
+      "Properties": {
+        "Endpoint": "test@example.com",
+        "Protocol": "email",
+        "TopicArn": {
+          "Ref": "CompleteSNS2557842D",
+        },
+      },
+      "Type": "AWS::SNS::Subscription",
+    },
+    "CompleteSnsKey06400967": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Statement": [
+            {
+              "Action": "kms:*",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":iam::",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":root",
+                    ],
+                  ],
+                },
+              },
+              "Resource": "*",
+            },
+            {
+              "Action": [
+                "kms:GenerateDataKey",
+                "kms:Decrypt",
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "states.amazonaws.com",
+              },
+              "Resource": "*",
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::KMS::Key",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "Destination920A3C57": {
+      "DeletionPolicy": "Retain",
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "AwsSolutions-S10",
+              "reason": "Bucket is private and is not using HTTP",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256",
+              },
+            },
+          ],
+        },
+        "CorsConfiguration": {
+          "CorsRules": [
+            {
+              "AllowedHeaders": [
+                "*",
+              ],
+              "AllowedMethods": [
+                "GET",
+              ],
+              "AllowedOrigins": [
+                "*",
+              ],
+              "MaxAge": 3000,
+            },
+          ],
+        },
+        "LoggingConfiguration": {
+          "DestinationBucketName": {
+            "Ref": "Logs6819BB44",
+          },
+          "LogFilePrefix": "destination-bucket-logs/",
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true,
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled",
+        },
+      },
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Retain",
+    },
+    "DestinationPolicy7982387E": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "AwsSolutions-S10",
+              "reason": "Bucket is private and is not using HTTP",
+            },
+          ],
+        },
+        "cfn_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "F16",
+              "reason": "Public website bucket policy requires a wildcard principal",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "Bucket": {
+          "Ref": "Destination920A3C57",
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:*",
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false",
+                },
+              },
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": "*",
+              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Destination920A3C57",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "Destination920A3C57",
+                          "Arn",
+                        ],
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": "s3:GetObject",
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceArn": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:",
+                        {
+                          "Ref": "AWS::Partition",
+                        },
+                        ":cloudfront::",
+                        {
+                          "Ref": "AWS::AccountId",
+                        },
+                        ":distribution/",
+                        {
+                          "Ref": "CloudFrontCloudFrontDistribution824F3346",
+                        },
+                      ],
+                    ],
+                  },
+                },
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudfront.amazonaws.com",
+              },
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::GetAtt": [
+                        "Destination920A3C57",
+                        "Arn",
+                      ],
+                    },
+                    "/*",
+                  ],
+                ],
+              },
+            },
+            {
+              "Action": "s3:ListBucket",
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceArn": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:",
+                        {
+                          "Ref": "AWS::Partition",
+                        },
+                        ":cloudfront::",
+                        {
+                          "Ref": "AWS::AccountId",
+                        },
+                        ":distribution/",
+                        {
+                          "Ref": "CloudFrontCloudFrontDistribution824F3346",
+                        },
+                      ],
+                    ],
+                  },
+                },
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudfront.amazonaws.com",
+              },
+              "Resource": {
+                "Fn::GetAtt": [
+                  "Destination920A3C57",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::S3::BucketPolicy",
+    },
+    "JobTemplateHD": {
+      "Properties": {
+        "AccelerationSettings": {
+          "Mode": "PREFERRED",
+        },
+        "Category": "VOD",
+        "Description": "VOD Foundation HD tier - CMAF, AVC (H.264), AAC, QVBR, Auto ABR",
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-HD",
+            ],
+          ],
+        },
+        "Priority": 0,
+        "SettingsJson": {
+          "OutputGroups": [
+            {
+              "AutomatedEncodingSettings": {
+                "AbrSettings": {
+                  "MaxAbrBitrate": 8500000,
+                  "MaxQualityLevel": 7,
+                  "MaxRenditions": 5,
+                },
+              },
+              "Name": "CMAF",
+              "OutputGroupSettings": {
+                "CmafGroupSettings": {
+                  "FragmentLength": 2,
+                  "SegmentControl": "SEGMENTED_FILES",
+                  "SegmentLength": 10,
+                  "TargetDurationCompatibilityMode": "SPEC_COMPLIANT",
+                  "WriteDashManifest": "ENABLED",
+                  "WriteHlsManifest": "ENABLED",
+                },
+                "Type": "CMAF_GROUP_SETTINGS",
+              },
+              "Outputs": [
+                {
+                  "ContainerSettings": {
+                    "Container": "CMFC",
+                  },
+                  "NameModifier": "_video",
+                  "VideoDescription": {
+                    "CodecSettings": {
+                      "Codec": "H_264",
+                      "H264Settings": {
+                        "FramerateControl": "INITIALIZE_FROM_SOURCE",
+                        "GopClosedCadence": 1,
+                        "GopSize": 2,
+                        "GopSizeUnits": "SECONDS",
+                        "ParControl": "SPECIFIED",
+                        "ParDenominator": 1,
+                        "ParNumerator": 1,
+                        "QualityTuningLevel": "MULTI_PASS_HQ",
+                        "RateControlMode": "QVBR",
+                        "SceneChangeDetect": "TRANSITION_DETECTION",
+                      },
+                    },
+                  },
+                },
+                {
+                  "AudioDescriptions": [
+                    {
+                      "AudioSourceName": "Audio Selector 1",
+                      "CodecSettings": {
+                        "AacSettings": {
+                          "Bitrate": 128000,
+                          "CodingMode": "CODING_MODE_2_0",
+                          "SampleRate": 48000,
+                        },
+                        "Codec": "AAC",
+                      },
+                    },
+                  ],
+                  "ContainerSettings": {
+                    "Container": "CMFC",
+                  },
+                  "NameModifier": "_audio",
+                },
+              ],
+            },
+          ],
+          "TimecodeConfig": {
+            "Source": "ZEROBASED",
+          },
+        },
+        "StatusUpdateInterval": "SECONDS_60",
+      },
+      "Type": "AWS::MediaConvert::JobTemplate",
+    },
+    "JobTemplateSD": {
+      "Properties": {
+        "AccelerationSettings": {
+          "Mode": "PREFERRED",
+        },
+        "Category": "VOD",
+        "Description": "VOD Foundation SD tier - CMAF, AVC (H.264), AAC, QVBR, Auto ABR",
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-SD",
+            ],
+          ],
+        },
+        "Priority": 0,
+        "SettingsJson": {
+          "OutputGroups": [
+            {
+              "AutomatedEncodingSettings": {
+                "AbrSettings": {
+                  "MaxAbrBitrate": 3000000,
+                  "MaxQualityLevel": 7,
+                  "MaxRenditions": 3,
+                },
+              },
+              "Name": "CMAF",
+              "OutputGroupSettings": {
+                "CmafGroupSettings": {
+                  "FragmentLength": 2,
+                  "SegmentControl": "SEGMENTED_FILES",
+                  "SegmentLength": 10,
+                  "TargetDurationCompatibilityMode": "SPEC_COMPLIANT",
+                  "WriteDashManifest": "ENABLED",
+                  "WriteHlsManifest": "ENABLED",
+                },
+                "Type": "CMAF_GROUP_SETTINGS",
+              },
+              "Outputs": [
+                {
+                  "ContainerSettings": {
+                    "Container": "CMFC",
+                  },
+                  "NameModifier": "_video",
+                  "VideoDescription": {
+                    "CodecSettings": {
+                      "Codec": "H_264",
+                      "H264Settings": {
+                        "FramerateControl": "INITIALIZE_FROM_SOURCE",
+                        "GopClosedCadence": 1,
+                        "GopSize": 2,
+                        "GopSizeUnits": "SECONDS",
+                        "ParControl": "SPECIFIED",
+                        "ParDenominator": 1,
+                        "ParNumerator": 1,
+                        "QualityTuningLevel": "MULTI_PASS_HQ",
+                        "RateControlMode": "QVBR",
+                        "SceneChangeDetect": "TRANSITION_DETECTION",
+                      },
+                    },
+                  },
+                },
+                {
+                  "AudioDescriptions": [
+                    {
+                      "AudioSourceName": "Audio Selector 1",
+                      "CodecSettings": {
+                        "AacSettings": {
+                          "Bitrate": 64000,
+                          "CodingMode": "CODING_MODE_2_0",
+                          "SampleRate": 48000,
+                        },
+                        "Codec": "AAC",
+                      },
+                    },
+                  ],
+                  "ContainerSettings": {
+                    "Container": "CMFC",
+                  },
+                  "NameModifier": "_audio",
+                },
+              ],
+            },
+          ],
+          "TimecodeConfig": {
+            "Source": "ZEROBASED",
+          },
+        },
+        "StatusUpdateInterval": "SECONDS_60",
+      },
+      "Type": "AWS::MediaConvert::JobTemplate",
+    },
+    "JobTemplateUHD": {
+      "Properties": {
+        "AccelerationSettings": {
+          "Mode": "PREFERRED",
+        },
+        "Category": "VOD",
+        "Description": "VOD Foundation UHD tier - CMAF, HEVC (H.265), AAC, QVBR, Auto ABR",
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-UHD",
+            ],
+          ],
+        },
+        "Priority": 0,
+        "SettingsJson": {
+          "OutputGroups": [
+            {
+              "AutomatedEncodingSettings": {
+                "AbrSettings": {
+                  "MaxAbrBitrate": 18000000,
+                  "MaxQualityLevel": 10,
+                  "MaxRenditions": 8,
+                },
+              },
+              "Name": "CMAF",
+              "OutputGroupSettings": {
+                "CmafGroupSettings": {
+                  "FragmentLength": 2,
+                  "SegmentControl": "SEGMENTED_FILES",
+                  "SegmentLength": 10,
+                  "TargetDurationCompatibilityMode": "SPEC_COMPLIANT",
+                  "WriteDashManifest": "ENABLED",
+                  "WriteHlsManifest": "ENABLED",
+                },
+                "Type": "CMAF_GROUP_SETTINGS",
+              },
+              "Outputs": [
+                {
+                  "ContainerSettings": {
+                    "Container": "CMFC",
+                  },
+                  "NameModifier": "_video",
+                  "VideoDescription": {
+                    "CodecSettings": {
+                      "Codec": "H_265",
+                      "H265Settings": {
+                        "FramerateControl": "INITIALIZE_FROM_SOURCE",
+                        "GopClosedCadence": 1,
+                        "GopSize": 2,
+                        "GopSizeUnits": "SECONDS",
+                        "ParControl": "SPECIFIED",
+                        "ParDenominator": 1,
+                        "ParNumerator": 1,
+                        "QualityTuningLevel": "MULTI_PASS_HQ",
+                        "RateControlMode": "QVBR",
+                        "SceneChangeDetect": "TRANSITION_DETECTION",
+                      },
+                    },
+                  },
+                },
+                {
+                  "AudioDescriptions": [
+                    {
+                      "AudioSourceName": "Audio Selector 1",
+                      "CodecSettings": {
+                        "AacSettings": {
+                          "Bitrate": 128000,
+                          "CodingMode": "CODING_MODE_2_0",
+                          "SampleRate": 48000,
+                        },
+                        "Codec": "AAC",
+                      },
+                    },
+                  ],
+                  "ContainerSettings": {
+                    "Container": "CMFC",
+                  },
+                  "NameModifier": "_audio",
+                },
+              ],
+            },
+          ],
+          "TimecodeConfig": {
+            "Source": "ZEROBASED",
+          },
+        },
+        "StatusUpdateInterval": "SECONDS_60",
+      },
+      "Type": "AWS::MediaConvert::JobTemplate",
+    },
+    "JobsTable1970BC16": {
+      "DeletionPolicy": "Delete",
+      "Metadata": {
+        "checkov": {
+          "skip": [
+            {
+              "comment": "Table holds only transcode-job metadata (GUIDs, manifests, playback URLs); no customer data or PII, already encrypted at rest with an AWS-managed key. A customer-managed CMK is not warranted for this reference solution.",
+              "id": "CKV_AWS_119",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "Guid",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "Status",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "Timestamp",
+            "AttributeType": "S",
+          },
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "Status-index",
+            "KeySchema": [
+              {
+                "AttributeName": "Status",
+                "KeyType": "HASH",
+              },
+              {
+                "AttributeName": "Timestamp",
+                "KeyType": "RANGE",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "Guid",
+            "KeyType": "HASH",
+          },
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true,
+        },
+        "SSESpecification": {
+          "SSEEnabled": true,
+        },
+        "TimeToLiveSpecification": {
+          "AttributeName": "ExpiresAt",
+          "Enabled": true,
+        },
+      },
+      "Type": "AWS::DynamoDB::Table",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "Logs6819BB44": {
+      "DeletionPolicy": "Retain",
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "AwsSolutions-S1",
+              "reason": "Used to store access logs for other buckets",
+            },
+            {
+              "id": "AwsSolutions-S10",
+              "reason": "Bucket is private and is not using HTTP",
+            },
+          ],
+        },
+        "cfn_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "W35",
+              "reason": "Logs bucket does not require logging configuration",
+            },
+            {
+              "id": "W51",
+              "reason": "Logs bucket is private and does not require a bucket policy",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "AccessControl": "LogDeliveryWrite",
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256",
+              },
+            },
+          ],
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "ObjectWriter",
+            },
+          ],
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true,
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled",
+        },
+      },
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Retain",
+    },
+    "LogsPolicy90DB40C9": {
+      "Properties": {
+        "Bucket": {
+          "Ref": "Logs6819BB44",
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:*",
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false",
+                },
+              },
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": "*",
+              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Logs6819BB44",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "Logs6819BB44",
+                          "Arn",
+                        ],
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::S3::BucketPolicy",
+    },
+    "MediaConvertRole031A64A9": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "mediaconvert.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "MediaconvertPolicy9E3026EC": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "AwsSolutions-IAM5",
+              "reason": "/* required to get/put objects to S3",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "Source71E471F1",
+                          "Arn",
+                        ],
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "Destination920A3C57",
+                          "Arn",
+                        ],
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "MediaconvertPolicy9E3026EC",
+        "Roles": [
+          {
+            "Ref": "MediaConvertRole031A64A9",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "Source71E471F1": {
+      "DeletionPolicy": "Retain",
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "AwsSolutions-S10",
+              "reason": "Bucket is private and is not using HTTP",
+            },
+          ],
+        },
+        "cfn_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "W51",
+              "reason": "source bucket is private and does not require a bucket policy",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256",
+              },
+            },
+          ],
+        },
+        "LoggingConfiguration": {
+          "DestinationBucketName": {
+            "Ref": "Logs6819BB44",
+          },
+          "LogFilePrefix": "source-bucket-logs/",
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true,
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled",
+        },
+      },
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Retain",
+    },
+    "SourceBucketRuleFD00E71C": {
+      "Properties": {
+        "Description": "Starts the VOD transcode workflow when a supported video is uploaded to the source bucket.",
+        "EventPattern": {
+          "detail": {
+            "bucket": {
+              "name": [
+                {
+                  "Ref": "Source71E471F1",
+                },
+              ],
+            },
+            "object": {
+              "key": [
+                {
+                  "suffix": ".mpg",
+                },
+                {
+                  "suffix": ".MPG",
+                },
+                {
+                  "suffix": ".mp4",
+                },
+                {
+                  "suffix": ".MP4",
+                },
+                {
+                  "suffix": ".m4v",
+                },
+                {
+                  "suffix": ".M4V",
+                },
+                {
+                  "suffix": ".mov",
+                },
+                {
+                  "suffix": ".MOV",
+                },
+                {
+                  "suffix": ".m2ts",
+                },
+                {
+                  "suffix": ".M2TS",
+                },
+                {
+                  "suffix": ".mxf",
+                },
+                {
+                  "suffix": ".MXF",
+                },
+                {
+                  "suffix": ".mkv",
+                },
+                {
+                  "suffix": ".MKV",
+                },
+                {
+                  "suffix": ".mpeg",
+                },
+                {
+                  "suffix": ".MPEG",
+                },
+                {
+                  "suffix": ".webm",
+                },
+                {
+                  "suffix": ".WEBM",
+                },
+                {
+                  "suffix": ".h264",
+                },
+                {
+                  "suffix": ".H264",
+                },
+                {
+                  "suffix": ".wmv",
+                },
+                {
+                  "suffix": ".WMV",
+                },
+              ],
+            },
+          },
+          "detail-type": [
+            "Object Created",
+          ],
+          "source": [
+            "aws.s3",
+          ],
+        },
+        "State": "ENABLED",
+        "Targets": [
+          {
+            "Arn": {
+              "Ref": "TranscodeWorkflowFF104B10",
+            },
+            "DeadLetterConfig": {
+              "Arn": {
+                "Fn::GetAtt": [
+                  "TriggerDLQ2AAE934B",
+                  "Arn",
+                ],
+              },
+            },
+            "Id": "Target0",
+            "RetryPolicy": {
+              "MaximumEventAgeInSeconds": 7200,
+              "MaximumRetryAttempts": 3,
+            },
+            "RoleArn": {
+              "Fn::GetAtt": [
+                "TranscodeWorkflowEventsRole82BAF70D",
+                "Arn",
+              ],
+            },
+          },
+        ],
+      },
+      "Type": "AWS::Events::Rule",
+    },
+    "SourceNotificationsDA12A088": {
+      "DependsOn": [
+        "SourceNotificationsHandlerPolicy82FE8034",
+        "SourcePolicyE5AB5F73",
+      ],
+      "Properties": {
+        "BucketName": {
+          "Ref": "Source71E471F1",
+        },
+        "Managed": true,
+        "NotificationConfiguration": {
+          "EventBridgeConfiguration": {},
+        },
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "BucketNotificationsHandler050a0587b7544547bf325f094a3db8347ECC3691",
+            "Arn",
+          ],
+        },
+        "SkipDestinationValidation": false,
+      },
+      "Type": "Custom::S3BucketNotifications",
+    },
+    "SourceNotificationsHandlerPolicy82FE8034": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:PutBucketNotification",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "Source71E471F1",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "SourceNotificationsHandlerPolicy82FE8034",
+        "Roles": [
+          {
+            "Ref": "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "SourcePolicyE5AB5F73": {
+      "Properties": {
+        "Bucket": {
+          "Ref": "Source71E471F1",
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:*",
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false",
+                },
+              },
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": "*",
+              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Source71E471F1",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "Source71E471F1",
+                          "Arn",
+                        ],
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::S3::BucketPolicy",
+    },
+    "SourceUploadArchive11F9CAE0": {
+      "Properties": {
+        "Description": "Replayable archive of source-bucket video-upload events for the VOD workflow.",
+        "EventPattern": {
+          "detail": {
+            "bucket": {
+              "name": [
+                {
+                  "Ref": "Source71E471F1",
+                },
+              ],
+            },
+            "object": {
+              "key": [
+                {
+                  "suffix": ".mpg",
+                },
+                {
+                  "suffix": ".MPG",
+                },
+                {
+                  "suffix": ".mp4",
+                },
+                {
+                  "suffix": ".MP4",
+                },
+                {
+                  "suffix": ".m4v",
+                },
+                {
+                  "suffix": ".M4V",
+                },
+                {
+                  "suffix": ".mov",
+                },
+                {
+                  "suffix": ".MOV",
+                },
+                {
+                  "suffix": ".m2ts",
+                },
+                {
+                  "suffix": ".M2TS",
+                },
+                {
+                  "suffix": ".mxf",
+                },
+                {
+                  "suffix": ".MXF",
+                },
+                {
+                  "suffix": ".mkv",
+                },
+                {
+                  "suffix": ".MKV",
+                },
+                {
+                  "suffix": ".mpeg",
+                },
+                {
+                  "suffix": ".MPEG",
+                },
+                {
+                  "suffix": ".webm",
+                },
+                {
+                  "suffix": ".WEBM",
+                },
+                {
+                  "suffix": ".h264",
+                },
+                {
+                  "suffix": ".H264",
+                },
+                {
+                  "suffix": ".wmv",
+                },
+                {
+                  "suffix": ".WMV",
+                },
+              ],
+            },
+          },
+          "detail-type": [
+            "Object Created",
+          ],
+          "source": [
+            "aws.s3",
+          ],
+        },
+        "KmsKeyIdentifier": "",
+        "RetentionDays": 30,
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":events:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":event-bus/default",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Events::Archive",
+    },
+    "TranscodeWorkflowEventsRole82BAF70D": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "events.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "TranscodeWorkflowEventsRoleDefaultPolicy6DF04FDF": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "states:StartExecution",
+              "Effect": "Allow",
+              "Resource": {
+                "Ref": "TranscodeWorkflowFF104B10",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "TranscodeWorkflowEventsRoleDefaultPolicy6DF04FDF",
+        "Roles": [
+          {
+            "Ref": "TranscodeWorkflowEventsRole82BAF70D",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "TranscodeWorkflowFF104B10": {
+      "DeletionPolicy": "Delete",
+      "DependsOn": [
+        "TranscodeWorkflowRoleDefaultPolicy17B90A68",
+        "TranscodeWorkflowRoleEE173340",
+      ],
+      "Properties": {
+        "DefinitionString": {
+          "Fn::Join": [
+            "",
+            [
+              "{
+  "Comment": "VOD Foundation transcode workflow: probe source, select quality tier, encode with MediaConvert (.sync), process outputs, and notify.",
+  "StartAt": "Prepare Input",
+  "States": {
+    "Prepare Input": {
+      "Type": "Pass",
+      "Comment": "Derive the source s3:// URI, bucket, and key from the S3 EventBridge event, and mint a random job GUID (States.UUID(), not derived from the event) used as the output prefix and DynamoDB key.",
+      "Parameters": {
+        "fileUri.$": "States.Format('s3://{}/{}', $.detail.bucket.name, $.detail.object.key)",
+        "guid.$": "States.UUID()",
+        "srcBucket.$": "$.detail.bucket.name",
+        "srcKey.$": "$.detail.object.key"
+      },
+      "ResultPath": "$",
+      "Next": "Probe"
+    },
+    "Probe": {
+      "Type": "Task",
+      "Comment": "Read source metadata (resolution, codec, duration) via the MediaConvert Probe API.",
+      "Resource": "arn:aws:states:::aws-sdk:mediaconvert:probe",
+      "TimeoutSeconds": 60,
+      "Parameters": {
+        "InputFiles": [
+          {
+            "FileUrl.$": "$.fileUri"
+          }
+        ]
+      },
+      "ResultPath": "$.probe",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "MediaConvert.TooManyRequestsException",
+            "MediaConvert.InternalServerErrorException",
+            "MediaConvert.ConflictException"
+          ],
+          "IntervalSeconds": 3,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "Notify Failure"
+        }
+      ],
+      "Next": "Extract Video Metadata"
+    },
+    "Extract Video Metadata": {
+      "Type": "Pass",
+      "QueryLanguage": "JSONata",
+      "Comment": "MediaConvert Probe does not guarantee the video track is first in Tracks[] (e.g. audio-first MP4s list audio at index 0), so a fixed Tracks[0] path misses the video. Select the track whose TrackType is 'video' and normalize its height into $.videoHeight; downstream Choice states read $.videoHeight so they work regardless of track order. When no video track is present the field is absent, routing to Unsupported Source.",
+      "Output": "{% $merge([$states.input, {'videoHeight': ([$states.input.probe.ProbeResults[0].Container.Tracks[TrackType = 'video'].VideoProperties.Height])[0]}]) %}",
+      "Next": "Check Video Track"
+    },
+    "Check Video Track": {
+      "Type": "Choice",
+      "Comment": "Only proceed for probe results that contain a decodable video track (height normalized by Extract Video Metadata).",
+      "Choices": [
+        {
+          "Variable": "$.videoHeight",
+          "IsPresent": true,
+          "Next": "Choose Quality Tier"
+        }
+      ],
+      "Default": "Unsupported Source"
+    },
+    "Unsupported Source": {
+      "Type": "Pass",
+      "Parameters": {
+        "guid.$": "$.guid",
+        "srcKey.$": "$.srcKey",
+        "error": {
+          "Error": "UnsupportedSource",
+          "Cause": "The uploaded object does not contain a probeable video track."
+        }
+      },
+      "ResultPath": "$",
+      "Next": "Notify Failure"
+    },
+    "Choose Quality Tier": {
+      "Type": "Choice",
+      "Comment": "Map probed source height to a quality tier. SD is below 720 (e.g. 480/576); 720p and 1080p are HD; 1440p and above are UHD (the default). Branches are ordered SD, HD, UHD so the workflow graph reads left-to-right; UHD is the Default because the Default branch renders last.",
+      "Choices": [
+        {
+          "Variable": "$.videoHeight",
+          "NumericLessThan": 720,
+          "Next": "Encode SD"
+        },
+        {
+          "Variable": "$.videoHeight",
+          "NumericLessThan": 1440,
+          "Next": "Encode HD"
+        }
+      ],
+      "Default": "Encode UHD"
+    },
+    "Encode SD": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::mediaconvert:createJob.sync",
+      "TimeoutSeconds": 1800,
+      "Parameters": {
+        "Role": "",
+              {
+                "Fn::GetAtt": [
+                  "MediaConvertRole031A64A9",
+                  "Arn",
+                ],
+              },
+              "",
+        "JobTemplate": "",
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-SD",
+        "UserMetadata": {
+          "guid.$": "$.guid",
+          "StackName": "",
+              {
+                "Ref": "AWS::StackName",
+              },
+              ""
+        },
+        "Settings": {
+          "Inputs": [
+            {
+              "AudioSelectors": {
+                "Audio Selector 1": {
+                  "DefaultSelection": "DEFAULT"
+                }
+              },
+              "VideoSelector": {
+                "Rotate": "AUTO"
+              },
+              "FileInput.$": "$.fileUri"
+            }
+          ],
+          "OutputGroups": [
+            {
+              "OutputGroupSettings": {
+                "CmafGroupSettings": {
+                  "Destination.$": "States.Format('s3://",
+              {
+                "Ref": "Destination920A3C57",
+              },
+              "/{}/index', $.guid)"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "ResultPath": "$.jobOutput",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "MediaConvert.TooManyRequestsException",
+            "MediaConvert.InternalServerErrorException",
+            "MediaConvert.ConflictException"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "Notify Failure"
+        }
+      ],
+      "Next": "Build Playback URLs"
+    },
+    "Encode HD": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::mediaconvert:createJob.sync",
+      "TimeoutSeconds": 3600,
+      "Parameters": {
+        "Role": "",
+              {
+                "Fn::GetAtt": [
+                  "MediaConvertRole031A64A9",
+                  "Arn",
+                ],
+              },
+              "",
+        "JobTemplate": "",
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-HD",
+        "UserMetadata": {
+          "guid.$": "$.guid",
+          "StackName": "",
+              {
+                "Ref": "AWS::StackName",
+              },
+              ""
+        },
+        "Settings": {
+          "Inputs": [
+            {
+              "AudioSelectors": {
+                "Audio Selector 1": {
+                  "DefaultSelection": "DEFAULT"
+                }
+              },
+              "VideoSelector": {
+                "Rotate": "AUTO"
+              },
+              "FileInput.$": "$.fileUri"
+            }
+          ],
+          "OutputGroups": [
+            {
+              "OutputGroupSettings": {
+                "CmafGroupSettings": {
+                  "Destination.$": "States.Format('s3://",
+              {
+                "Ref": "Destination920A3C57",
+              },
+              "/{}/index', $.guid)"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "ResultPath": "$.jobOutput",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "MediaConvert.TooManyRequestsException",
+            "MediaConvert.InternalServerErrorException",
+            "MediaConvert.ConflictException"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "Notify Failure"
+        }
+      ],
+      "Next": "Build Playback URLs"
+    },
+    "Encode UHD": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::mediaconvert:createJob.sync",
+      "TimeoutSeconds": 7200,
+      "Parameters": {
+        "Role": "",
+              {
+                "Fn::GetAtt": [
+                  "MediaConvertRole031A64A9",
+                  "Arn",
+                ],
+              },
+              "",
+        "JobTemplate": "",
+              {
+                "Ref": "AWS::StackName",
+              },
+              "-UHD",
+        "UserMetadata": {
+          "guid.$": "$.guid",
+          "StackName": "",
+              {
+                "Ref": "AWS::StackName",
+              },
+              ""
+        },
+        "Settings": {
+          "Inputs": [
+            {
+              "AudioSelectors": {
+                "Audio Selector 1": {
+                  "DefaultSelection": "DEFAULT"
+                }
+              },
+              "VideoSelector": {
+                "Rotate": "AUTO"
+              },
+              "FileInput.$": "$.fileUri"
+            }
+          ],
+          "OutputGroups": [
+            {
+              "OutputGroupSettings": {
+                "CmafGroupSettings": {
+                  "Destination.$": "States.Format('s3://",
+              {
+                "Ref": "Destination920A3C57",
+              },
+              "/{}/index', $.guid)"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "ResultPath": "$.jobOutput",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "MediaConvert.TooManyRequestsException",
+            "MediaConvert.InternalServerErrorException",
+            "MediaConvert.ConflictException"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "Notify Failure"
+        }
+      ],
+      "Next": "Build Playback URLs"
+    },
+    "Build Playback URLs": {
+      "Type": "Pass",
+      "Comment": "Derive the CloudFront HLS/DASH URLs and the output S3 location from the deterministic destination (s3://<dest>/<guid>/index). No GetJob or Lambda needed.",
+      "Parameters": {
+        "guid.$": "$.guid",
+        "srcBucket.$": "$.srcBucket",
+        "srcKey.$": "$.srcKey",
+        "probe.$": "$.probe",
+        "jobOutput.$": "$.jobOutput",
+        "outputs": {
+          "hls.$": "States.Format('https://",
+              {
+                "Fn::GetAtt": [
+                  "CloudFrontCloudFrontDistribution824F3346",
+                  "DomainName",
+                ],
+              },
+              "/{}/index.m3u8', $.guid)",
+          "dash.$": "States.Format('https://",
+              {
+                "Fn::GetAtt": [
+                  "CloudFrontCloudFrontDistribution824F3346",
+                  "DomainName",
+                ],
+              },
+              "/{}/index.mpd', $.guid)",
+          "outputManifestHls.$": "States.Format('{}/index.m3u8', $.guid)",
+          "outputManifestDash.$": "States.Format('{}/index.mpd', $.guid)",
+          "destinationS3.$": "States.Format('s3://",
+              {
+                "Ref": "Destination920A3C57",
+              },
+              "/{}/', $.guid)"
+        }
+      },
+      "ResultPath": "$",
+      "Next": "Record Job"
+    },
+    "Record Job": {
+      "Type": "Task",
+      "QueryLanguage": "JSONata",
+      "Comment": "Write one item per job to DynamoDB (native integration). One item per execution, so there is no manifest read-modify-write race. This state uses JSONata so ExpiresAt (DynamoDB TTL) can be computed as now + 90 days of epoch seconds; Output passes the state input through unchanged for the downstream JSONPath states.",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "TimeoutSeconds": 15,
+      "Arguments": {
+        "TableName": "",
+              {
+                "Ref": "JobsTable1970BC16",
+              },
+              "",
+        "Item": {
+          "Guid": { "S": "{% $states.input.guid %}" },
+          "Status": { "S": "Complete" },
+          "Timestamp": { "S": "{% $states.context.State.EnteredTime %}" },
+          "ExpiresAt": { "N": "{% $string($floor($millis() / 1000) + 7776000) %}" },
+          "SrcBucket": { "S": "{% $states.input.srcBucket %}" },
+          "SrcKey": { "S": "{% $states.input.srcKey %}" },
+          "JobId": { "S": "{% $states.input.jobOutput.Job.Id %}" },
+          "JobTemplate": { "S": "{% $states.input.jobOutput.Job.JobTemplate %}" },
+          "HlsUrl": { "S": "{% $states.input.outputs.hls %}" },
+          "DashUrl": { "S": "{% $states.input.outputs.dash %}" },
+          "OutputManifestHls": { "S": "{% $states.input.outputs.outputManifestHls %}" },
+          "OutputManifestDash": { "S": "{% $states.input.outputs.outputManifestDash %}" },
+          "DestinationS3": { "S": "{% $states.input.outputs.destinationS3 %}" },
+          "Probe": { "S": "{% $string($states.input.probe.ProbeResults) %}" },
+          "JobResult": { "S": "{% $string($states.input.jobOutput.Job) %}" }
+        }
+      },
+      "Output": "{% $states.input %}",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "DynamoDB.ThrottlingException",
+            "DynamoDB.InternalServerErrorException",
+            "DynamoDB.ProvisionedThroughputExceededException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Output": "{% $merge([$states.input, {'error': $states.errorOutput}]) %}",
+          "Next": "Notify Failure"
+        }
+      ],
+      "Next": "Notify Success"
+    },
+    "Notify Success": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "TimeoutSeconds": 15,
+      "Parameters": {
+        "TopicArn": "",
+              {
+                "Ref": "CompleteSNS2557842D",
+              },
+              "",
+        "Subject.$": "States.Format('{}: VOD job COMPLETE id:{}', '",
+              {
+                "Ref": "AWS::StackName",
+              },
+              "', $.guid)",
+        "Message.$": "States.Format('Video \\"{}\\" is ready.\\n\\nHLS:  {}\\nDASH: {}\\n\\nOutput location: {}\\nJob ID: {}', $.srcKey, $.outputs.hls, $.outputs.dash, $.outputs.destinationS3, $.guid)"
+      },
+      "End": true
+    },
+    "Notify Failure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "TimeoutSeconds": 15,
+      "Parameters": {
+        "TopicArn": "",
+              {
+                "Ref": "CompleteSNS2557842D",
+              },
+              "",
+        "Subject.$": "States.Format('{}: VOD job ERROR id:{}', '",
+              {
+                "Ref": "AWS::StackName",
+              },
+              "', $.guid)",
+        "Message.$": "States.Format('Video \\"{}\\" failed to process.\\n\\nJob ID: {}\\nError: {}\\nCause: {}', $.srcKey, $.guid, $.error.Error, $.error.Cause)"
+      },
+      "Next": "Workflow Failed"
+    },
+    "Workflow Failed": {
+      "Type": "Fail",
+      "Error": "VodWorkflowFailed",
+      "Cause": "The VOD transcode workflow failed. See the SNS error notification and the execution history for details."
+    }
+  }
+}
+",
+            ],
+          ],
+        },
+        "LoggingConfiguration": {
+          "Destinations": [
+            {
+              "CloudWatchLogsLogGroup": {
+                "LogGroupArn": {
+                  "Fn::GetAtt": [
+                    "TranscodeWorkflowLogs17676C42",
+                    "Arn",
+                  ],
+                },
+              },
+            },
+          ],
+          "IncludeExecutionData": true,
+          "Level": "ALL",
+        },
+        "RoleArn": {
+          "Fn::GetAtt": [
+            "TranscodeWorkflowRoleEE173340",
+            "Arn",
+          ],
+        },
+        "StateMachineType": "STANDARD",
+        "TracingConfiguration": {
+          "Enabled": true,
+        },
+      },
+      "Type": "AWS::StepFunctions::StateMachine",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "TranscodeWorkflowLogs17676C42": {
+      "DeletionPolicy": "Delete",
+      "Metadata": {
+        "cfn_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "W84",
+              "reason": "Step Functions execution logs contain no customer data or PII and are encrypted at rest with an AWS-owned key; a customer-managed KMS key is not warranted for this reference solution.",
+            },
+          ],
+        },
+        "checkov": {
+          "skip": [
+            {
+              "comment": "Step Functions execution logs contain no customer data or PII and are encrypted at rest with an AWS-owned key; a customer-managed KMS key is not warranted for this reference solution.",
+              "id": "CKV_AWS_158",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "RetentionInDays": 30,
+      },
+      "Type": "AWS::Logs::LogGroup",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "TranscodeWorkflowPolicy6FF1FD6F": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Resource::arn:<AWS::Partition>:mediaconvert:<AWS::Region>:<AWS::AccountId>:*",
+                "Resource::arn:<AWS::Partition>:mediaconvert:<AWS::Region>:<AWS::AccountId>:queues/*",
+                "Resource::arn:<AWS::Partition>:mediaconvert:<AWS::Region>:<AWS::AccountId>:jobTemplates/*",
+                "Resource::arn:<AWS::Partition>:mediaconvert:<AWS::Region>:<AWS::AccountId>:presets/*",
+                "Resource::arn:<AWS::Partition>:mediaconvert:<AWS::Region>:<AWS::AccountId>:jobs/*",
+                "Resource::<Source71E471F1.Arn>/*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "MediaConvert Probe/createJob.sync require wildcard queue/jobTemplate/preset/job ARNs (not known at synth time); GetJob/CancelJob are tag-scoped to ManagedByService=AWSStepFunctions and S3 read is scoped to source objects.",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "mediaconvert:Probe",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":mediaconvert:",
+                    {
+                      "Ref": "AWS::Region",
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId",
+                    },
+                    ":*",
+                  ],
+                ],
+              },
+            },
+            {
+              "Action": "mediaconvert:CreateJob",
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":mediaconvert:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":queues/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":mediaconvert:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":jobTemplates/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":mediaconvert:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":presets/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "mediaconvert:GetJob",
+                "mediaconvert:CancelJob",
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "aws:ResourceTag/ManagedByService": "AWSStepFunctions",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":mediaconvert:",
+                    {
+                      "Ref": "AWS::Region",
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId",
+                    },
+                    ":jobs/*",
+                  ],
+                ],
+              },
+            },
+            {
+              "Action": "iam:PassRole",
+              "Condition": {
+                "StringEquals": {
+                  "iam:PassedToService": "mediaconvert.amazonaws.com",
+                },
+              },
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "MediaConvertRole031A64A9",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "events:PutTargets",
+                "events:PutRule",
+                "events:DescribeRule",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":events:",
+                    {
+                      "Ref": "AWS::Region",
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId",
+                    },
+                    ":rule/StepFunctionsGetEventsForMediaConvertJobRule",
+                  ],
+                ],
+              },
+            },
+            {
+              "Action": "s3:GetObject",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::GetAtt": [
+                        "Source71E471F1",
+                        "Arn",
+                      ],
+                    },
+                    "/*",
+                  ],
+                ],
+              },
+            },
+            {
+              "Action": "dynamodb:PutItem",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "JobsTable1970BC16",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "TranscodeWorkflowPolicy6FF1FD6F",
+        "Roles": [
+          {
+            "Ref": "TranscodeWorkflowRoleEE173340",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "TranscodeWorkflowRoleDefaultPolicy17B90A68": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Resource::*",
+                "Action::kms:GenerateDataKey*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Step Functions X-Ray tracing produces a provider-generated wildcard resource, and SNS grantPublish on the KMS-encrypted topic adds the kms:GenerateDataKey* action wildcard, on the role DefaultPolicy.",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "logs:CreateLogDelivery",
+                "logs:GetLogDelivery",
+                "logs:UpdateLogDelivery",
+                "logs:DeleteLogDelivery",
+                "logs:ListLogDeliveries",
+                "logs:PutResourcePolicy",
+                "logs:DescribeResourcePolicies",
+                "logs:DescribeLogGroups",
+              ],
+              "Effect": "Allow",
+              "Resource": "*",
+            },
+            {
+              "Action": [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+              ],
+              "Effect": "Allow",
+              "Resource": "*",
+            },
+            {
+              "Action": "sns:Publish",
+              "Effect": "Allow",
+              "Resource": {
+                "Ref": "CompleteSNS2557842D",
+              },
+            },
+            {
+              "Action": [
+                "kms:Decrypt",
+                "kms:GenerateDataKey*",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "CompleteSnsKey06400967",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "TranscodeWorkflowRoleDefaultPolicy17B90A68",
+        "Roles": [
+          {
+            "Ref": "TranscodeWorkflowRoleEE173340",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "TranscodeWorkflowRoleEE173340": {
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "applies_to": [
+                "Resource::*",
+                "Action::kms:GenerateDataKey*",
+              ],
+              "id": "AwsSolutions-IAM5",
+              "reason": "Step Functions X-Ray tracing produces a provider-generated wildcard resource, and SNS grantPublish on the KMS-encrypted topic adds the kms:GenerateDataKey* action wildcard, on the role DefaultPolicy.",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "states.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "TriggerDLQ2AAE934B": {
+      "DeletionPolicy": "Delete",
+      "Metadata": {
+        "cdk_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "AwsSolutions-SQS3",
+              "reason": "This queue is itself the dead-letter queue for the EventBridge target; it does not require its own DLQ.",
+            },
+          ],
+        },
+        "cfn_nag": {
+          "rules_to_suppress": [
+            {
+              "id": "W48",
+              "reason": "DLQ holds dead-lettered S3-notification trigger events (bucket/key only); no customer data or PII, already encrypted at rest with an AWS-owned key. A customer-managed KMS key is not warranted for this reference solution.",
+            },
+          ],
+        },
+        "checkov": {
+          "skip": [
+            {
+              "comment": "DLQ holds dead-lettered S3-notification trigger events (bucket/key only); no customer data or PII, already encrypted at rest with an AWS-owned key. A customer-managed KMS key is not warranted for this reference solution.",
+              "id": "CKV_AWS_27",
+            },
+          ],
+        },
+      },
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "TriggerDLQPolicy53E081CB": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sqs:*",
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false",
+                },
+              },
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": "*",
+              },
+              "Resource": {
+                "Fn::GetAtt": [
+                  "TriggerDLQ2AAE934B",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": "sqs:SendMessage",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Fn::GetAtt": [
+                      "SourceBucketRuleFD00E71C",
+                      "Arn",
+                    ],
+                  },
+                },
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "events.amazonaws.com",
+              },
+              "Resource": {
+                "Fn::GetAtt": [
+                  "TriggerDLQ2AAE934B",
+                  "Arn",
+                ],
+              },
+              "Sid": "AllowEventRuleVODSourceBucketRule30C9489C",
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "Queues": [
+          {
+            "Ref": "TriggerDLQ2AAE934B",
+          },
+        ],
+      },
+      "Type": "AWS::SQS::QueuePolicy",
+    },
+    "TriggerDlqNotEmptyAlarmD9F20779": {
+      "Properties": {
+        "AlarmDescription": "A VOD workflow trigger event was dead-lettered (EventBridge could not start the state machine).",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "TriggerDLQ2AAE934B",
+                "QueueName",
+              ],
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Namespace": "AWS/SQS",
+        "Period": 300,
+        "Statistic": "Maximum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "WorkflowAbortedAlarmDD9D9D39": {
+      "Properties": {
+        "AlarmDescription": "One or more VOD transcode workflow executions were aborted.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "StateMachineArn",
+            "Value": {
+              "Ref": "TranscodeWorkflowFF104B10",
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "ExecutionsAborted",
+        "Namespace": "AWS/States",
+        "Period": 300,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "WorkflowFailuresAlarm0A28673E": {
+      "Properties": {
+        "AlarmDescription": "One or more VOD transcode workflow executions failed.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "StateMachineArn",
+            "Value": {
+              "Ref": "TranscodeWorkflowFF104B10",
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "ExecutionsFailed",
+        "Namespace": "AWS/States",
+        "Period": 300,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "WorkflowThrottledAlarmD6918E21": {
+      "Properties": {
+        "AlarmDescription": "VOD transcode workflow executions were throttled.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "StateMachineArn",
+            "Value": {
+              "Ref": "TranscodeWorkflowFF104B10",
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "ExecutionThrottled",
+        "Namespace": "AWS/States",
+        "Period": 300,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "WorkflowTimeoutsAlarm41CD4246": {
+      "Properties": {
+        "AlarmDescription": "One or more VOD transcode workflow executions timed out (e.g. a stuck MediaConvert job).",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "StateMachineArn",
+            "Value": {
+              "Ref": "TranscodeWorkflowFF104B10",
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "ExecutionsTimedOut",
+        "Namespace": "AWS/States",
+        "Period": 300,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
+                  ],
+                  {
+                    "Ref": "BootstrapVersion",
+                  },
+                ],
+              },
+            ],
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI.",
+        },
+      ],
+    },
+  },
+}
+`;

@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # CDK application — the only package with third-party dependencies.
+  - package-ecosystem: npm
+    directory: /source/cdk
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    groups:
+      aws-cdk:
+        patterns:
+          - aws-cdk
+          - aws-cdk-lib
+          - "@aws-solutions-constructs/*"
+          - cdk-nag
+
+  # GitHub Actions workflows (e.g. the CodeQL workflow).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies

@@ -1,0 +1,9 @@
+---
+id: SO9673
+name: video-on-demand-on-aws-foundation
+version: v2.0.0
+cloudformation_templates:
+  - template: video-on-demand-on-aws-foundation.template
+    main_template: true
+build_environment:
+  build_image: "aws/codebuild/standard:7.0"

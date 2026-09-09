@@ -1,0 +1,77 @@
+{
+  "ProbeResults": [
+    {
+      "Container": {
+        "Duration": 219.22133333333332,
+        "Format": "mp4",
+        "Tracks": [
+          {
+            "Codec": "AVC",
+            "Duration": 219.22,
+            "Index": 1,
+            "TrackType": "video",
+            "VideoProperties": {
+              "BitDepth": 8,
+              "BitRate": 3939051,
+              "CodecMetadata": {
+                "BitDepth": 8,
+                "ChromaSubsampling": "420",
+                "CodedFrameRate": {
+                  "Denominator": 2,
+                  "Numerator": 100
+                },
+                "ColorPrimaries": "ITU_709",
+                "Height": 1080,
+                "Level": "4.2",
+                "MatrixCoefficients": "ITU_709",
+                "Profile": "High",
+                "ScanType": "Progressive",
+                "TransferCharacteristics": "ITU_709",
+                "Width": 1920
+              },
+              "FrameRate": {
+                "Denominator": 1,
+                "Numerator": 50
+              },
+              "Height": 1080,
+              "Width": 1920
+            }
+          },
+          {
+            "AudioProperties": {
+              "BitDepth": 16,
+              "BitRate": 128000,
+              "Channels": 2,
+              "FrameRate": {
+                "Denominator": 8,
+                "Numerator": 375
+              },
+              "LanguageCode": "eng",
+              "SampleRate": 48000
+            },
+            "Codec": "AAC",
+            "Duration": 219.22133333333332,
+            "Index": 2,
+            "TrackType": "audio"
+          }
+        ]
+      },
+      "Metadata": {
+        "ETag": "\"5b669722a00dc6f2b3e046c56d5d962f-14\"",
+        "FileSize": 111707418,
+        "LastModified": "2026-07-02T03:23:54Z",
+        "MimeType": "video/mp4"
+      },
+      "TrackMappings": [
+        {
+          "AudioTrackIndexes": [
+            2
+          ],
+          "VideoTrackIndexes": [
+            1
+          ]
+        }
+      ]
+    }
+  ]
+}

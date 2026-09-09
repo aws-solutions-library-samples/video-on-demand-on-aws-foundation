@@ -1,0 +1,22 @@
+.DS_Store
+/package-lock.json
+/source/package-lock.json
+.vscode/
+.kiro/
+.claude/
+.claude.json
+CLAUDE.local.md
+CLAUDE.md
+.cdk.staging
+cdk.out
+node_modules/
+coverage-reports/
+deployment/global-s3-assets
+deployment/regional-s3-assets
+staging/
+open-source/
+dev/
+
+# Local scan/tool output (kept local, not published)
+.protoshield/
+.holmes/
